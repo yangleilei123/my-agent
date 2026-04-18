@@ -1,6 +1,6 @@
 1、使用的是千问模型,向量模型 使用千问的Embedding
 2、在.env文件填入自己模型的base_url和api_key
-3、文件存放在docs文件夹下
+3、文件存放在docs文件夹下,没有docs文件夹请新建一个,并在其中文档,每个文档内容不宜过大,建议控制在1000字以内
 4、ingest_docs.py
     1) 先执行此文件读取docs文件夹下文件生成向量数据库
     2) 清空现有向量数据库 python ingest_docs.py --clear
