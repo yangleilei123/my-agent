@@ -1,0 +1,39 @@
+@import './base.css';
+
+/* 基础居中样式 */
+#app {
+  max-width: 1400px; /* 增加最大宽度 */
+  margin: 0 auto;
+  padding: 2rem;
+  font-weight: normal;
+  width: 90%; /* 关键：确保占一定宽度 */
+  min-width: 800px; /* 关键：防止过窄 */
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: hsla(160, 100%, 37%, 1);
+  transition: 0.4s;
+  padding: 3px;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: hsla(160, 100%, 37%, 0.2);
+  }
+}
+
+/* === 重要：覆盖默认的网格布局 === */
+@media (min-width: 1024px) {
+  body {
+    /* 删除原来的 display: flex */
+  }
+
+  #app {
+    /* 删除原来的 grid 布局，恢复为块级居中 */
+    display: block; /* 关键：覆盖 grid 布局 */
+    padding: 2rem; /* 恢复原始内边距 */
+    max-width: 1400px; /* 确保与小屏一致 */
+  }
+}
