@@ -1,4 +1,5 @@
-my-agent-qa/chroma_db/chroma.sqlite3
 my-agent-qa/__pycache__/agent.cpython-312.pyc
 my-agent-qa/__pycache__/main.cpython-312.pyc
 my-agent-qa/__pycache__/rag.cpython-312.pyc
+my-agent-qa/chroma_db/*
+my-agent-qa/docs/*

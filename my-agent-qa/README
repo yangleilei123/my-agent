@@ -1,3 +1,9 @@
-1、使用的是千问模型
+1、使用的是千问模型,向量模型 使用千问的Embedding
 2、在.env文件填入自己模型的base_url和api_key
-3、现在只读取test.pdf文件内容，你可以自己替换文件，后续增加其他格式文件读取
+3、文件存放在docs文件夹下
+4、ingest_docs.py
+    1) 先执行此文件读取docs文件夹下文件生成向量数据库
+    2) 清空现有向量数据库 python ingest_docs.py --clear
+    3) 验证文档内容 python ingest_docs.py --verify
+5、python_ray.py 调试检索功能,检查向量数据库是否包含查询内容
+6、启动服务 python main.py

@@ -27,16 +27,25 @@ def create_agent():
     def retrieve_docs(query: str) -> str:
         # retriever.invoke 是同步的，返回 List[Document]
         docs = retriever.invoke(query)
+        print(f"找到 {len(docs)} 个相关文档片段")
+
+        # 打印每个文档片段用于调试
+        for i, doc in enumerate(docs):
+            print(f"文档片段 {i+1}: {doc.page_content[:200]}...")
+            print(f"来源: {doc.metadata}")
+
         # 格式化文档内容
         formatted_docs = "\n\n".join([doc.page_content for doc in docs])
-        return formatted_docs if formatted_docs else "未找到相关信息。"
+        result = formatted_docs if formatted_docs else "未找到相关信息。"
+        print(f"返回给模型的内容: {result[:200]}...")
+        return result
     
     # c. 封装知识库工具 (knowledge_tool)
     # 目的: 将 retriever 封装成 LangGraph 能够理解和使用的标准工具（Tool）
     knowledge_tool = Tool(
         name="knowledge_base_tool",
         func=retrieve_docs,
-        description="当你被问及关于本地项目、公司规章、特定私有文档的问题时，必须使用此工具。它会返回相关文档片段。"
+        description="当你被问及关于本地项目、公司规章、特定私有文档的问题时，必须使用此工具。它会返回相关文档片段。优先级最高，必须首先尝试此工具。如果用户询问特定的个人信息、文档内容等，优先使用此工具。"
     )
 
     # d. 创建网络搜索工具 (search_tool)
@@ -59,6 +68,16 @@ def create_agent():
     
     # 创建包含系统提示的初始消息列表
     initial_messages = [SystemMessage(content=system_prompt)]
+
+    # f. Agent 的人设和系统提示词
+    system_prompt = """你是一个超级智能问答助手。你的行为准则如下：
+
+1. 优先原则：对于任何问题，你必须首先使用 knowledge_base_tool 查阅私有知识库
+2. 顺序原则：只有在知识库中没有找到相关信息时，才使用 web_search 进行网络搜索
+3. 诚实原则：如果两个工具都找不到答案，诚实地告诉用户没有找到相关信息
+4. 语言原则：始终用中文回答
+
+记住：用户可能询问私人信息、特定文档内容、公司内部资料等，这些都应该首先在知识库中查找。"""
 
     # f. 创建内存检查点
     memory = MemorySaver()

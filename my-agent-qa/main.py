@@ -50,20 +50,6 @@ async def chat_with_agent(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理请求时出错: {str(e)}")
 
-@app.post("/upload")
-async def upload_doc(file_path: str = Form(...)): # 使用 Form 来接收路径参数
-    """
-    为了简单起见，这里直接传入本地文件路径进行处理。
-    生产环境应改成接收文件上传 (UploadFile)。
-    """
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="文件不存在")
-    try:
-        ingest_document(file_path)
-        return {"message": "文档导入成功"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导入文档时出错: {str(e)}")
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
