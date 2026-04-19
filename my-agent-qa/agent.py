@@ -93,12 +93,20 @@ def create_agent():
     # 使用 messages 参数传递系统提示
     # 注意：根据最新的 langgraph 版本，可能需要通过 config 或者其他方式设置
     # 如果 create_react_agent 不直接支持 messages，我们稍后再调整
-    agent_executor = create_react_agent(
-        model=llm, 
-        tools=tools,
-        # messages=initial_messages # 这个参数可能也不对，让我们先移除它
-        checkpointer=memory  # 启用内存
-    )
+    # h. 创建 Agent 执行器
+    try:
+        agent_executor = create_react_agent(
+            model=llm, 
+            tools=tools,
+            checkpointer=memory  # 启用内存
+        )
+        print("✅ Agent 执行器创建成功")
+        return agent_executor
+    except Exception as e:
+        print(f"❌ Agent 执行器创建失败: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise e
     
     # 如果需要，我们可以创建一个包装函数来在每次调用时注入系统消息
     def wrapped_invoke(inputs, config=None):
