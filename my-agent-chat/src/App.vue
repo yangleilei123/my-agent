@@ -1,6 +1,6 @@
 <!-- src/App.vue -->
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 
 // 定义响应式变量
 const question = ref('');
@@ -8,42 +8,138 @@ const answer = ref('');
 const loading = ref(false);
 const error = ref('');
 const conversationHistory = ref([]); // 存储对话历史
+const sessionId = ref('');
+const sessions = ref([]);
 
-// API 请求地址，如果后端不在 localhost:8000，请修改此处
-const API_BASE_URL = 'http://localhost:8000'; 
+const API_BASE_URL = 'http://localhost:8001';
+const SESSION_KEY = 'agent_session_id';
+const SESSIONS_KEY = 'agent_sessions_list';
+
+const saveSessions = () => {
+  localStorage.setItem(SESSION_KEY, sessionId.value);
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.value));
+};
+
+const loadSessions = () => {
+  try {
+    const savedSessions = localStorage.getItem(SESSIONS_KEY);
+    if (savedSessions) {
+      const parsedSessions = JSON.parse(savedSessions);
+      // 为旧会话数据添加缺失的字段
+      sessions.value = parsedSessions.map(session => ({
+        id: session.id,
+        name: session.name,
+        lastMessage: session.lastMessage || '',
+        createdAt: session.createdAt || new Date(parseInt(session.id)).toLocaleString('zh-CN'),
+        updatedAt: session.updatedAt || new Date(parseInt(session.id)).toLocaleString('zh-CN'),
+      }));
+    }
+  } catch (err) {
+    console.warn('读取会话列表失败:', err);
+  }
+};
+
+const setSession = (id) => {
+  sessionId.value = id;
+  localStorage.setItem(SESSION_KEY, id);
+};
+
+const createNewSession = async () => {
+  const newId = Date.now().toString();
+  const now = new Date();
+  const newSession = {
+    id: newId,
+    name: `会话 ${sessions.value.length + 1}`,
+    lastMessage: '',
+    createdAt: now.toLocaleString('zh-CN'),
+    updatedAt: now.toLocaleString('zh-CN'),
+  };
+  sessions.value.unshift(newSession);
+  setSession(newId);
+  saveSessions();
+  conversationHistory.value = [];
+  answer.value = '';
+  error.value = '';
+};
+
+const selectSession = async (id) => {
+  if (!id || sessionId.value === id) {
+    return;
+  }
+  setSession(id);
+  await loadSessionHistory(id);
+  saveSessions();
+};
+
+const loadSessionHistory = async (id) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/history/${id}`);
+    if (!response.ok) {
+      console.warn('获取历史失败:', response.status);
+      conversationHistory.value = [];
+      return;
+    }
+    const data = await response.json();
+    if (Array.isArray(data.history)) {
+      conversationHistory.value = data.history.map((item) => ({
+        type: item.role === 'assistant' ? 'ai' : item.role,
+        content: item.content,
+      }));
+      
+      // 更新会话的最后消息预览
+      const currentSession = sessions.value.find(s => s.id === id);
+      if (currentSession && data.history.length > 0) {
+        const lastMessage = data.history[data.history.length - 1];
+        currentSession.lastMessage = lastMessage.content.length > 30 ? lastMessage.content.substring(0, 30) + '...' : lastMessage.content;
+      }
+    } else {
+      conversationHistory.value = [];
+    }
+  } catch (err) {
+    console.warn('加载历史会话失败:', err);
+    conversationHistory.value = [];
+  }
+};
+
+const ensureSession = async () => {
+  loadSessions();
+  const savedId = localStorage.getItem(SESSION_KEY);
+  if (savedId && sessions.value.some((session) => session.id === savedId)) {
+    await selectSession(savedId);
+    return;
+  }
+  await createNewSession();
+};
 
 /**
  * 发送问题到后端 API
  */
 const sendQuestion = async () => {
   if (!question.value.trim()) {
-    // 可以用一个更优雅的方式提示，比如 Toast
     alert('请输入问题');
     return;
   }
 
+  if (!sessionId.value) {
+    await createNewSession();
+  }
+
   const userQuestion = question.value.trim();
-  // 添加用户问题到历史记录
   conversationHistory.value.push({ type: 'user', content: userQuestion });
-  
-  // 清空当前输入和之前的答案/错误
   question.value = '';
   answer.value = '';
   error.value = '';
   loading.value = true;
 
   try {
-    const sessionId = localStorage.getItem('sessionId') || Date.now().toString();
-    localStorage.setItem('sessionId', sessionId); // 保存会话ID
-
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         question: userQuestion,
-        session_id: sessionId  // 传递会话ID
+        session_id: sessionId.value,
       }),
     });
 
@@ -53,31 +149,60 @@ const sendQuestion = async () => {
     }
 
     const data = await response.json();
-    // 将 AI 回答添加到历史记录
     conversationHistory.value.push({ type: 'ai', content: data.answer });
+    
+    // 更新会话的最后消息预览
+    const currentSession = sessions.value.find(s => s.id === sessionId.value);
+    if (currentSession) {
+      currentSession.lastMessage = data.answer.length > 30 ? data.answer.substring(0, 30) + '...' : data.answer;
+      currentSession.updatedAt = new Date().toLocaleString('zh-CN');
+    }
+    
+    saveSessions();
   } catch (err) {
     console.error('API 调用失败:', err);
     error.value = `请求失败: ${err.message}`;
-    // 也可以将错误信息加入历史记录
     conversationHistory.value.push({ type: 'error', content: err.message });
   } finally {
     loading.value = false;
   }
 };
 
-/**
- * 按 Enter 键发送问题
- */
-const handleKeyDown = (event) => {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault(); // 阻止换行
-    sendQuestion();
+const deleteSession = async (id, event) => {
+  event.stopPropagation(); // 阻止事件冒泡，避免触发selectSession
+  if (!confirm('确定要删除这个会话吗？')) {
+    return;
+  }
+
+  try {
+    // 调用后端API删除历史
+    const response = await fetch(`${API_BASE_URL}/history/${id}/reset`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`删除失败: ${response.status}`);
+    }
+
+    // 从本地会话列表中移除
+    sessions.value = sessions.value.filter(session => session.id !== id);
+
+    // 如果删除的是当前会话，切换到第一个会话或创建新会话
+    if (sessionId.value === id) {
+      if (sessions.value.length > 0) {
+        await selectSession(sessions.value[0].id);
+      } else {
+        await createNewSession();
+      }
+    }
+
+    saveSessions();
+  } catch (err) {
+    console.error('删除会话失败:', err);
+    alert(`删除会话失败: ${err.message}`);
   }
 };
 
-/**
- * 获取消息项的 CSS 类名
- */
 const getMessageClass = (type) => {
   switch (type) {
     case 'user':
@@ -90,6 +215,10 @@ const getMessageClass = (type) => {
       return '';
   }
 };
+
+onMounted(() => {
+  ensureSession();
+});
 </script>
 
 <template>
@@ -97,55 +226,91 @@ const getMessageClass = (type) => {
     <header class="header">
       <h1>AI 问答助手</h1>
     </header>
-    
-    <main class="main-content">
-      <!-- 对话历史区域 -->
-      <div class="conversation-history">
-        <div 
-          v-for="(item, index) in conversationHistory" 
-          :key="index" 
-          :class="['message-item', getMessageClass(item.type)]"
-        >
-          <div class="message-bubble">
-            <!-- <strong v-if="item.type !== 'ai'">{{ item.type === 'user' ? '你' : '系统' }}:</strong> -->
-            <span>{{ item.content }}</span>
+
+    <div class="body-content">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h2>会话管理</h2>
+          <button class="sidebar-btn" @click="createNewSession">新增会话</button>
+        </div>
+
+        <div class="session-list">
+          <div
+            v-for="session in sessions"
+            :key="session.id"
+            class="session-item"
+            :class="{ active: session.id === sessionId }"
+            @click="selectSession(session.id)"
+          >
+            <div class="session-content">
+              <div class="session-name">{{ session.name }}</div>
+              <div class="session-preview">
+                {{ session.lastMessage || `创建于 ${session.createdAt}` }}
+              </div>
+            </div>
+            <button
+              class="delete-btn"
+              @click="deleteSession(session.id, $event)"
+              title="删除会话"
+            >
+              ×
+            </button>
+          </div>
+
+          <div v-if="sessions.length === 0" class="session-empty">
+            尚无会话，请点击“新增会话”。
           </div>
         </div>
-        
-        <!-- 加载指示器 -->
-        <div v-if="loading" class="message-item message-loading">
-          <div class="message-bubble">
-            <span>AI 正在思考...</span>
-            <div class="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+      </aside>
+
+      <main class="main-content">
+        <!-- 对话历史区域 -->
+        <div class="conversation-history">
+          <div
+            v-for="(item, index) in conversationHistory"
+            :key="index"
+            :class="['message-item', getMessageClass(item.type)]"
+          >
+            <div class="message-bubble">
+              <span>{{ item.content }}</span>
+            </div>
+          </div>
+
+          <!-- 加载指示器 -->
+          <div v-if="loading" class="message-item message-loading">
+            <div class="message-bubble">
+              <span>AI 正在思考...</span>
+              <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- 输入区域 -->
-      <div class="input-section">
-        <textarea
-          v-model="question"
-          placeholder="请输入您的问题..."
-          :disabled="loading"
-          @keydown="handleKeyDown"
-          rows="2"
-          class="input-textarea"
-        ></textarea>
-        <button @click="sendQuestion" :disabled="loading" class="submit-btn">
-          <span v-if="!loading">发送</span>
-          <span v-else>...</span>
-        </button>
-      </div>
-      
-      <!-- 全局错误信息 (可选，也可以只在历史中显示) -->
-      <div v-if="error" class="global-error">
-        {{ error }}
-      </div>
-    </main>
+        <!-- 输入区域 -->
+        <div class="input-section">
+          <textarea
+            v-model="question"
+            placeholder="请输入您的问题..."
+            :disabled="loading"
+            @keydown="handleKeyDown"
+            rows="2"
+            class="input-textarea"
+          ></textarea>
+          <button @click="sendQuestion" :disabled="loading" class="submit-btn">
+            <span v-if="!loading">发送</span>
+            <span v-else>...</span>
+          </button>
+        </div>
+
+        <!-- 全局错误信息 (可选，也可以只在历史中显示) -->
+        <div v-if="error" class="global-error">
+          {{ error }}
+        </div>
+      </main>
+    </div>
   </div>
 </template>
 
@@ -176,14 +341,12 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  /* 关键：不再用 max-width，而是用 width + margin auto 居中 */
-  width: 90%; /* 在大屏上占 90% 宽度，小屏自适应 */
-  max-width: 1400px; /* 大屏上限 */
+  width: 100%;
+  max-width: 1600px;
   margin: 0 auto;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.08);
   background-color: white;
-  /* 确保不被压缩 */
-  min-width: 800px; /* 强制最小宽度，避免过窄 */
+  min-width: 900px;
 }
 
 /* 头部 */
@@ -203,15 +366,138 @@ body {
   font-weight: 600;
 }
 
-/* 主内容区 */
+.body-content {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  flex: 1;
+}
+
+.sidebar {
+  width: 280px;
+  border-right: 1px solid #e9ecef;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 10px;
+}
+
+.sidebar-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1f2a44;
+}
+
+.sidebar-btn {
+  padding: 10px 14px;
+  background: #2575fc;
+  border: none;
+  border-radius: 12px;
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.session-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-item {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #edf2f7;
+  background-color: #fafbff;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+
+.session-item.active {
+  background-color: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.session-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+.session-content {
+  flex: 1;
+  min-width: 0; /* 防止内容被压缩 */
+  padding-right: 30px; /* 为删除按钮留空间 */
+}
+
+.session-name {
+  color: #1f2a44;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.session-preview {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #dc3545;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 50%;
+  transition: all 0.2s;
+  opacity: 0.6;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  opacity: 1;
+  background-color: rgba(220, 53, 69, 0.15);
+  transform: scale(1.1);
+}
+
+.session-empty {
+  padding: 16px;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #475569;
+  line-height: 1.6;
+}
+
 .main-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: calc(100vh - 120px);
-  padding: 20px;
+  padding: 10px 0;
   gap: 20px;
-  /* 关键：让内容区域也撑开 */
-  width: 100%;
 }
 
 /* 对话历史区域 */
